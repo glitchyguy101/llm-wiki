@@ -1,7 +1,7 @@
 # Wiki-LLM - V1
 ## An Agentic Knowledge Base Powered by LLMs
 
-**Wiki-LLM** is an intelligent, self-maintaining knowledge base system that leverages Large Language Models (LLMs) to think, reason, and autonomously organize information into a structured wiki. It combines agentic AI with document management, web search, and real-time interaction through a modern web interface.
+**Wiki-LLM** is an intelligent, self-maintaining knowledge base system that leverages Large Language Models (LLMs) to think, reason, and autonomously organize information into a structured wiki Based on the **Andrej Karpathy’s** "LLM Wiki". It combines agentic AI with document management, web search, and real-time interaction through a modern web interface.
 
 ---
 
