@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 from google.genai import types
-from duckduckgo_search import DDGS
+import serpapi
 
 WIKI_DIR = Path(__file__).parent.parent / "wiki"
 WIKI_DIR.mkdir(exist_ok=True)
@@ -19,6 +19,7 @@ RAW_DIR = Path(__file__).parent.parent / "raw"
 RAW_DIR.mkdir(exist_ok=True)
 CLIPPINGS_DIR = Path(__file__).parent.parent / "Clippings"
 CLIPPINGS_DIR.mkdir(exist_ok=True)
+#Skill = types.Skill
 
 
 # ─────────────────────────────────────────────
@@ -183,13 +184,12 @@ def delete_wiki_file(filename: str) -> dict:
 # ────────────────────────────────────────────
 def google_search(query:str) -> dict:
     """Perform a Google web search and return the top results."""
-    with DDGS() as ddgs:
-        try:
-            results = [r for r in ddgs.text(query, region='us-en', max_results=10)]
-            return {"results": results}
-        except Exception as e:
-            return {"error": str(e or "Unknown error during search")}
-
+    client = serpapi.Client(api_key=os.getenv("SERPAPI_KEY"))
+    try:
+        results = client.search(q=query, engine="google")
+        return {"results": results.get("organic_results", [])}
+    except Exception as e:
+        return {"error": str(e or "Unknown error during search")}
 
 # ____________________________________________
 # Tool: List all tools (for debugging)
@@ -412,6 +412,20 @@ TOOL_DECLARATIONS = [
             },
             "required": ["query"],
         },
+    },
+    {
+        "name": "read_clipping_file",
+        "description": "Read the content of a clipping file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "The filename of the clipping to read.",
+                }
+            },
+            "required": ["filename"],
+        },
     }
 ]
 
@@ -431,6 +445,7 @@ TOOL_MAP = {
     "list_tools": lambda args: list_tools(),
     "list_clippings": lambda args: list_clippings(),
     "search_clippings": lambda args: search_clippings(args["query"]),
+    "read_clipping_file": lambda args: read_clipping_file(args["filename"])
 }
 
 
