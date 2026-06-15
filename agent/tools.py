@@ -478,7 +478,43 @@ TOOL_DECLARATIONS = [
             },
             "required": ["filename"],
         },
-    }
+    },
+    {
+        "name": "list_skills",
+        "description": "List all skill files in the skills directory.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    }, 
+    {
+        "name": "search_skills",
+        "description": "Search all skill files for a keyword or phrase (case-insensitive).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query.",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "read_skill_file",
+        "description": "Read the content of a skill file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "The filename of the skill to read.",
+                }
+            },
+            "required": ["filename"],
+        },
+    },
 ]
 
 
@@ -497,7 +533,11 @@ TOOL_MAP = {
     "list_tools": lambda args: list_tools(),
     "list_clippings": lambda args: list_clippings(),
     "search_clippings": lambda args: search_clippings(args["query"]),
-    "read_clipping_file": lambda args: read_clipping_file(args["filename"])
+    "read_clipping_file": lambda args: read_clipping_file(args["filename"]),
+    "list_skills": lambda args: list_skills(),
+    "search_skills": lambda args: search_skills(args["query"]),
+    "read_skill_file": lambda args: read_skill_file(args["filename"]),
+    
 }
 
 

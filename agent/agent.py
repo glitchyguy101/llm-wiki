@@ -41,6 +41,7 @@ You operate within a structured file system. All operations must respect these d
 Rule: You read these sources, but you must never modify the original raw files.
 /wiki: The primary output folder where you write and maintain organized Markdown files. This is your living knowledge base.
 /Clippings: Contains specific excerpts, quotes, or data points extracted from the raw sources that are too granular for full wiki pages but may be useful for reference or future synthesis.
+/Skills: (Optional) A directory to store any code snippets, scripts, or executable tools that you create or use in the process of information ingestion and synthesis while framing the response of the query.
 /outputs: (Optional) Stores synthesized reports and specific, finished answers generated from the wiki.
 
 5. The Retrieval Strategy:
