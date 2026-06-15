@@ -19,8 +19,8 @@ RAW_DIR = Path(__file__).parent.parent / "raw"
 RAW_DIR.mkdir(exist_ok=True)
 CLIPPINGS_DIR = Path(__file__).parent.parent / "Clippings"
 CLIPPINGS_DIR.mkdir(exist_ok=True)
-#Skill = types.Skill
-
+SKILL_DIR = Path(__file__).parent.parent / "Skills"
+SKILL_DIR.mkdir(exist_ok=True)
 
 # ─────────────────────────────────────────────
 # Tool: Read a raw file (filename with .txt .md .docx .html .json .csv or regex)
@@ -249,6 +249,58 @@ def search_clippings(query: str) -> dict:
             results.append({"file": path.name, "matches": matches})
     return {"query": query, "results": results, "total_files_matched": len(results)}
 
+
+# ─────────────────────────────────────────────
+# list skills
+# ─────────────────────────────────────────────
+def list_skills() -> dict:
+    """List all skill files in the skills directory."""
+    SKILL_DIR = Path(__file__).parent.parent / "Skills"
+    SKILL_DIR.mkdir(exist_ok=True)
+    files = sorted(SKILL_DIR.glob("**/*.py"))
+    result = []
+    for f in files:
+        rel = f.relative_to(SKILL_DIR)
+        stat = f.stat()
+        result.append({
+            "name": str(rel),
+            "size_bytes": stat.st_size,
+            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        })
+    return {"files": result, "count": len(result)}
+
+
+# ─────────────────────────────────────────────
+# navigate Skills folder (for agent to access skills)
+# ─────────────────────────────────────────────
+def read_skill_file(filename: str) -> dict:
+    """Read the content of a skill file."""
+    path = SKILL_DIR / filename
+    if not path.exists():
+        return {"error": f"File '{filename}' not found."}
+    content = path.read_text(encoding="utf-8", errors="ignore")
+    return {"content": content}
+
+
+# ─────────────────────────────────────────────
+# search skills
+# ─────────────────────────────────────────────
+def search_skills(query: str) -> dict:
+    """Search all skill files for a keyword or phrase (case-insensitive)."""
+    SKILL_DIR = Path(__file__).parent.parent / "Skills"
+    SKILL_DIR.mkdir(exist_ok=True)
+    query_lower = query.lower()
+    results = []
+    for path in SKILL_DIR.glob("**/*.py"):
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        lines = content.splitlines()
+        matches = []
+        for i, line in enumerate(lines, 1):
+            if query_lower in line.lower():
+                matches.append({"line": i, "text": line.strip()})
+        if matches:
+            results.append({"file": path.name, "matches": matches})
+    return {"query": query, "results": results, "total_files_matched": len(results)}
 
 # ─────────────────────────────────────────────
 # Gemini function declarations (tool schemas)
