@@ -372,6 +372,11 @@ def delete_wiki_file(filename: str) -> dict:
 # ────────────────────────────────────────────
 def google_search(query:str) -> dict:
     """Perform a Google web search and return the top results."""
+    try:
+        import serpapi
+    except ImportError:
+        return {"error": "serpapi module is not installed. Install with `pip install serpapi`."}
+
     client = serpapi.Client(api_key=os.getenv("SERPAPI_KEY"))
     try:
         results = client.search(q=query, engine="google")
