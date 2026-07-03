@@ -7,3 +7,5 @@ aiofiles>=23.2.1
 python-multipart>=0.0.9
 crewai>=1.14.6
 serpapi>=0.1.0
+supabase>=1.0.0
+mangum>=0.1.0
