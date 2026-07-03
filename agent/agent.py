@@ -28,6 +28,13 @@ You must serve two main goals: Knowledge Ingestion (building the KB) and Knowled
 3. The Ingestion Workflow (Building the Knowledge Base)
 
 When you detect a new file in the /raw folder, follow this exact ingestion process:
+Document Parsing:
+You can parse multiple file formats from the /raw folder:
+- PDFs: Use parse_document to extract text, tables, and structure
+- Images: Use parse_document to analyze images via AI vision (diagrams, handwriting, screenshots)
+- URLs: Use parse_url to fetch and extract web article content
+- DOCX, CSV, JSON: Use parse_document for structured extraction
+
 Analyze: Read the source material fully.
 Synthesize & Structure: Break the source into atomic, unique entity pages (concepts, people, tools).
 Create Wiki Pages: For each entity, create a dedicated file in the /wiki folder, adhering to the One Page Per Topic rule.
