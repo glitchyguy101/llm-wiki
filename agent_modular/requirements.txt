@@ -5,7 +5,29 @@ python-dotenv>=1.0.0
 websockets>=12.0
 aiofiles>=23.2.1
 python-multipart>=0.0.9
-duckduckgo-search
+duckduckgo-search>=6.0.0
 openai>=1.0.0
 anthropic>=0.30.0
 huggingface_hub>=0.23.0
+requests>=2.31.0
+
+# Nexus-Knowledge: Vector Store
+chromadb>=0.5.0
+
+# Nexus-Knowledge: Document Parsing
+PyMuPDF>=1.24.0
+pdfplumber>=0.11.0
+python-docx>=1.1.0
+trafilatura>=1.12.0
+beautifulsoup4>=4.12.0
+Pillow>=10.0.0
+
+# Nexus-Knowledge: Multi-Agent (LangChain + LangGraph)
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-google-genai>=2.0.0
+langchain-community>=0.3.0
+langgraph>=0.2.0
+
+# Nexus-Knowledge: Local LLM (Ollama - optional)
+ollama>=0.3.0

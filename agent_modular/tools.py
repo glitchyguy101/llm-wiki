@@ -1,39 +1,212 @@
 """
-tools.py - All tool implementations for the Wiki-LLM agent.
-The agent can read/write wiki files, list notes, execute Python code, and search.
+tools.py - All tool implementations for the Wiki-LLM / Nexus-Knowledge agent.
+Extends the original agent_modular tools with:
+  - semantic_search (ChromaDB)
+  - parse_document (PDF, image, DOCX auto-detect)
+  - parse_url (web article extraction)
+  - upload_raw_file (base64 upload + auto-ingest)
 """
 
 import os
-import subprocess
 import sys
+import subprocess
 import glob
 import re
 from pathlib import Path
 from datetime import datetime
-from google.genai import types
-from duckduckgo_search import DDGS
+from typing import Optional
 
-WIKI_DIR = Path(__file__).parent.parent / "wiki"
+# ── Add nexus to path so tools can import it ──────────────────────────────────
+_ROOT = Path(__file__).parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+WIKI_DIR = _ROOT / "wiki"
 WIKI_DIR.mkdir(exist_ok=True)
-RAW_DIR = Path(__file__).parent.parent / "raw"
+RAW_DIR = _ROOT / "raw"
 RAW_DIR.mkdir(exist_ok=True)
 
 
+# ─────────────────────────────────────────────
+# Lazy imports for optional dependencies
+# ─────────────────────────────────────────────
+def _get_vector_store():
+    try:
+        from nexus.vector_store import get_vector_store
+        return get_vector_store()
+    except Exception:
+        return None
+
+def _get_parser():
+    try:
+        from nexus.document_parser import parse_file, parse_url as _parse_url
+        return parse_file, _parse_url
+    except Exception:
+        return None, None
+
 
 # ─────────────────────────────────────────────
-# Tool: Read a raw file (filename with .pdf .txt .md .docx .html .json .csv .jpg .png or regex)
+# Tool: Read a raw file (with multi-format parsing)
 # ─────────────────────────────────────────────
 def read_raw_file(filename: str) -> dict:
-    """Read the content of a raw file by name (relative to raw/)."""
+    """Read and parse the content of a raw file (supports PDF, image, DOCX, TXT, MD)."""
     filename = Path(filename).name
     path = RAW_DIR / filename
     if not path.exists():
         return {"error": f"File '{filename}' not found in raw."}
+
+    parse_file, _ = _get_parser()
+    if parse_file:
+        doc = parse_file(str(path))
+        if doc.error:
+            # Fallback to plain text
+            try:
+                content = path.read_text(encoding="utf-8", errors="ignore")
+                return {"filename": filename, "content": content, "lines": len(content.splitlines())}
+            except Exception as e:
+                return {"error": str(e)}
+        return {
+            "filename": filename,
+            "content": doc.content,
+            "title": doc.title,
+            "source_type": doc.source_type,
+            "lines": len(doc.content.splitlines()),
+            "metadata": doc.metadata,
+        }
+
+    # Plain text fallback (no nexus parser)
     try:
-        content = path.read_text(encoding="utf-8")
+        content = path.read_text(encoding="utf-8", errors="ignore")
         return {"filename": filename, "content": content, "lines": len(content.splitlines())}
     except Exception as e:
         return {"error": str(e)}
+
+
+# ─────────────────────────────────────────────
+# Tool: Parse a document from /raw (explicit parser call)
+# ─────────────────────────────────────────────
+def parse_document(filename: str) -> dict:
+    """
+    Parse a document from the /raw directory using the appropriate parser.
+    Supports PDF (text + tables), images (AI vision), DOCX, CSV, JSON, TXT.
+    Returns extracted text content as markdown.
+    """
+    filename = Path(filename).name
+    path = RAW_DIR / filename
+    if not path.exists():
+        return {"error": f"File '{filename}' not found in raw."}
+
+    parse_file, _ = _get_parser()
+    if not parse_file:
+        return {"error": "Document parser not available. Ensure nexus/ package is installed."}
+
+    doc = parse_file(str(path))
+    if doc.error:
+        return {"error": doc.error}
+
+    return {
+        "filename": filename,
+        "title": doc.title,
+        "source_type": doc.source_type,
+        "content": doc.content,
+        "lines": len(doc.content.splitlines()),
+        "metadata": doc.metadata,
+    }
+
+
+# ─────────────────────────────────────────────
+# Tool: Parse a URL
+# ─────────────────────────────────────────────
+def parse_url(url: str) -> dict:
+    """
+    Fetch and extract the main article content from a web URL.
+    Returns clean markdown-formatted text with title and source metadata.
+    Strips navigation, ads, and boilerplate.
+    """
+    _, url_parser = _get_parser()
+    if not url_parser:
+        return {"error": "URL parser not available. Install trafilatura or beautifulsoup4."}
+
+    doc = url_parser(url)
+    if doc.error:
+        return {"error": doc.error, "url": url}
+
+    return {
+        "url": url,
+        "title": doc.title,
+        "source_type": doc.source_type,
+        "content": doc.content,
+        "lines": len(doc.content.splitlines()),
+        "metadata": doc.metadata,
+    }
+
+
+# ─────────────────────────────────────────────
+# Tool: Semantic search (ChromaDB)
+# ─────────────────────────────────────────────
+def semantic_search(query: str, n_results: int = 5) -> dict:
+    """
+    Search the knowledge base using semantic similarity (vector search).
+    Returns the most relevant chunks from indexed wiki and raw documents.
+    More powerful than keyword search — finds conceptually related content.
+    """
+    store = _get_vector_store()
+    if not store:
+        # Graceful fallback to keyword search
+        return search_wiki(query)
+
+    results = store.semantic_search(query, n_results=n_results)
+    if not results:
+        return {"query": query, "results": [], "total_results": 0}
+
+    return {
+        "query": query,
+        "results": [
+            {
+                "content": r.content,
+                "source": r.source,
+                "score": r.score,
+                "metadata": r.metadata,
+            }
+            for r in results
+        ],
+        "total_results": len(results),
+    }
+
+
+# ─────────────────────────────────────────────
+# Tool: Ingest document into vector store
+# ─────────────────────────────────────────────
+def ingest_document(filename: str) -> dict:
+    """
+    Parse and ingest a document from /raw into the semantic vector store.
+    Call this after uploading a new file to make it searchable.
+    """
+    filename = Path(filename).name
+    path = RAW_DIR / filename
+    if not path.exists():
+        return {"error": f"File '{filename}' not found in raw."}
+
+    store = _get_vector_store()
+    if not store:
+        return {"error": "Vector store not available."}
+
+    parse_file, _ = _get_parser()
+    content = ""
+    source_type = "text"
+    if parse_file:
+        doc = parse_file(str(path))
+        content = doc.content if not doc.error else ""
+        source_type = doc.source_type
+
+    if not content:
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception as e:
+            return {"error": str(e)}
+
+    result = store.ingest_document(content, source=filename, metadata={"source_type": source_type})
+    return result
 
 
 # ─────────────────────────────────────────────
@@ -44,22 +217,23 @@ def list_raw_files() -> dict:
     files = sorted(RAW_DIR.glob("**/*"))
     result = []
     for f in files:
-        rel = f.relative_to(RAW_DIR)
-        stat = f.stat()
-        result.append({
-            "name": str(rel),
-            "size_bytes": stat.st_size,
-            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-        })
+        if f.is_file():
+            rel = f.relative_to(RAW_DIR)
+            stat = f.stat()
+            result.append({
+                "name": str(rel),
+                "extension": f.suffix.lower(),
+                "size_bytes": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            })
     return {"files": result, "count": len(result)}
-
 
 
 # ─────────────────────────────────────────────
 # Tool: List wiki files
 # ─────────────────────────────────────────────
 def list_wiki_files() -> dict:
-    """List all markdown files in the wiki directory."""
+    """List all markdown files in the wiki knowledge base."""
     files = sorted(WIKI_DIR.glob("**/*.md"))
     result = []
     for f in files:
@@ -77,7 +251,7 @@ def list_wiki_files() -> dict:
 # Tool: Read a wiki file
 # ─────────────────────────────────────────────
 def read_wiki_file(filename: str) -> dict:
-    """Read the content of a wiki file by name (relative to wiki/)."""
+    """Read the full content of a specific wiki note file."""
     path = WIKI_DIR / filename
     if not path.exists():
         return {"error": f"File '{filename}' not found in wiki."}
@@ -92,14 +266,19 @@ def read_wiki_file(filename: str) -> dict:
 # Tool: Write / update a wiki file
 # ─────────────────────────────────────────────
 def write_wiki_file(filename: str, content: str) -> dict:
-    """Write or overwrite a markdown file in the wiki directory."""
+    """Create or overwrite a markdown note in the wiki. Automatically indexes in vector store."""
     if not filename.endswith(".md"):
         filename += ".md"
-    # Sanitize path — no escaping the wiki dir
     filename = Path(filename).name
     path = WIKI_DIR / filename
     try:
         path.write_text(content, encoding="utf-8")
+
+        # Auto-ingest into vector store
+        store = _get_vector_store()
+        if store:
+            store.ingest_document(content, source=filename, metadata={"type": "wiki"})
+
         return {"success": True, "filename": filename, "bytes_written": len(content.encode())}
     except Exception as e:
         return {"error": str(e)}
@@ -109,7 +288,7 @@ def write_wiki_file(filename: str, content: str) -> dict:
 # Tool: Append to a wiki file
 # ─────────────────────────────────────────────
 def append_wiki_file(filename: str, content: str) -> dict:
-    """Append content to an existing wiki file (creates it if missing)."""
+    """Append new content to an existing wiki note (creates it if missing)."""
     if not filename.endswith(".md"):
         filename += ".md"
     filename = Path(filename).name
@@ -118,13 +297,19 @@ def append_wiki_file(filename: str, content: str) -> dict:
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
         new_content = existing + "\n" + content
         path.write_text(new_content, encoding="utf-8")
+
+        # Re-ingest updated file
+        store = _get_vector_store()
+        if store:
+            store.ingest_document(new_content, source=filename, metadata={"type": "wiki"})
+
         return {"success": True, "filename": filename, "total_lines": len(new_content.splitlines())}
     except Exception as e:
         return {"error": str(e)}
 
 
 # ─────────────────────────────────────────────
-# Tool: Search wiki
+# Tool: Keyword search wiki
 # ─────────────────────────────────────────────
 def search_wiki(query: str) -> dict:
     """Search all wiki files for a keyword or phrase (case-insensitive)."""
@@ -169,7 +354,7 @@ def execute_python(code: str) -> dict:
 # Tool: Delete a wiki file
 # ─────────────────────────────────────────────
 def delete_wiki_file(filename: str) -> dict:
-    """Delete a wiki file by name."""
+    """Delete a wiki note file that is no longer needed."""
     filename = Path(filename).name
     path = WIKI_DIR / filename
     if not path.exists():
@@ -177,48 +362,108 @@ def delete_wiki_file(filename: str) -> dict:
     path.unlink()
     return {"success": True, "deleted": filename}
 
-# ────────────────────────────────────────────
-# Tool: Google Web-search
-# ────────────────────────────────────────────
-def google_search(query:str) -> dict:
-    """Perform a Google web search and return the top results."""
-    with DDGS() as ddgs:
-        results = [r for r in ddgs.text(query, max_results=5)]
-        return {"results": results}
 
 # ─────────────────────────────────────────────
-# Unified tool declarations (JSON Schema format)
+# Tool: Web search (DuckDuckGo)
+# ─────────────────────────────────────────────
+def google_search(query: str) -> dict:
+    """Search the web using DuckDuckGo and return top results."""
+    try:
+        from duckduckgo_search import DDGS
+        with DDGS() as ddgs:
+            results = [r for r in ddgs.text(query, max_results=5)]
+            return {"results": results}
+    except ImportError:
+        return {"error": "duckduckgo-search not installed. Run: pip install duckduckgo-search"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ─────────────────────────────────────────────
+# Tool: Sync wiki to vector store
+# ─────────────────────────────────────────────
+def sync_wiki_to_vectorstore() -> dict:
+    """Re-index all wiki files into the semantic vector store. Run after bulk changes."""
+    store = _get_vector_store()
+    if not store:
+        return {"error": "Vector store not available."}
+    return store.sync_wiki(str(WIKI_DIR))
+
+
+# ─────────────────────────────────────────────
+# Unified Tool Declarations (JSON Schema)
 # ─────────────────────────────────────────────
 UNIFIED_TOOL_DECLARATIONS = [
     {
         "name": "list_raw_files",
-        "description": "List all files in the raw directory.",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-        },
+        "description": "List all files in the raw directory (PDFs, images, text, DOCX, etc).",
+        "parameters": {"type": "object", "properties": {}},
     },
     {
         "name": "read_raw_file",
-        "description": "Read the content of a file in the raw directory.",
+        "description": "Read and parse a file from the /raw directory. Automatically handles PDF, image (AI vision), DOCX, CSV, JSON, and text formats.",
         "parameters": {
             "type": "object",
             "properties": {
-                "filename": {
-                    "type": "string",
-                    "description": "The filename (e.g. 'source.txt') relative to raw/.",
-                }
+                "filename": {"type": "string", "description": "The filename (e.g. 'paper.pdf') relative to raw/."}
             },
             "required": ["filename"],
         },
     },
     {
-        "name": "list_wiki_files",
-        "description": "List all markdown note files in the wiki knowledge base.",
+        "name": "parse_document",
+        "description": "Explicitly parse a document from /raw using AI-powered extraction. Best for PDFs with tables, images with diagrams/handwriting, and DOCX files.",
         "parameters": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "filename": {"type": "string", "description": "The filename to parse (e.g. 'lecture.pdf', 'diagram.png')."}
+            },
+            "required": ["filename"],
         },
+    },
+    {
+        "name": "parse_url",
+        "description": "Fetch a web URL and extract the main article content as clean markdown. Strips navigation, ads, and boilerplate. Great for research from web pages.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "The full URL to fetch (e.g. 'https://arxiv.org/abs/...')"}
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "semantic_search",
+        "description": "Search the knowledge base using semantic similarity. Finds conceptually related content even if exact keywords differ. Use this before keyword search.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The search query or concept to find."},
+                "n_results": {"type": "integer", "description": "Number of results to return (default: 5)"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "ingest_document",
+        "description": "Parse and index a /raw document into the semantic vector store to make it searchable.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "filename": {"type": "string", "description": "The filename to ingest."}
+            },
+            "required": ["filename"],
+        },
+    },
+    {
+        "name": "sync_wiki_to_vectorstore",
+        "description": "Re-index all wiki markdown files into the vector store. Run this after bulk wiki updates.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "list_wiki_files",
+        "description": "List all markdown note files in the wiki knowledge base.",
+        "parameters": {"type": "object", "properties": {}},
     },
     {
         "name": "read_wiki_file",
@@ -226,35 +471,26 @@ UNIFIED_TOOL_DECLARATIONS = [
         "parameters": {
             "type": "object",
             "properties": {
-                "filename": {
-                    "type": "string",
-                    "description": "The markdown filename (e.g. 'transformers.md') relative to the wiki directory.",
-                }
+                "filename": {"type": "string", "description": "The markdown filename (e.g. 'transformers.md')."}
             },
             "required": ["filename"],
         },
     },
     {
         "name": "write_wiki_file",
-        "description": "Create or overwrite a markdown note in the wiki. Use this to save research, summaries, or findings.",
+        "description": "Create or overwrite a markdown note in the wiki. Automatically indexes in vector store.",
         "parameters": {
             "type": "object",
             "properties": {
-                "filename": {
-                    "type": "string",
-                    "description": "The filename to write (e.g. 'transformers.md').",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The full markdown content to write into the file.",
-                },
+                "filename": {"type": "string", "description": "The filename to write (e.g. 'transformers.md')."},
+                "content": {"type": "string", "description": "The full markdown content to write."},
             },
             "required": ["filename", "content"],
         },
     },
     {
         "name": "append_wiki_file",
-        "description": "Append new content to an existing wiki note (e.g. add new findings to an existing topic).",
+        "description": "Append new content to an existing wiki note (creates if missing).",
         "parameters": {
             "type": "object",
             "properties": {
@@ -266,28 +502,22 @@ UNIFIED_TOOL_DECLARATIONS = [
     },
     {
         "name": "search_wiki",
-        "description": "Search the wiki knowledge base for a keyword or phrase across all notes.",
+        "description": "Keyword search across all wiki files. Use semantic_search first for better results.",
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search term or phrase to look for.",
-                }
+                "query": {"type": "string", "description": "The search term or phrase."}
             },
             "required": ["query"],
         },
     },
     {
         "name": "execute_python",
-        "description": "Execute a Python code snippet and return the output. Use for calculations, data processing, or verification.(allowed libraries: random, numpy, pandas, json, os, date)",
+        "description": "Execute a Python code snippet and return the output.",
         "parameters": {
             "type": "object",
             "properties": {
-                "code": {
-                    "type": "string",
-                    "description": "Valid Python code to execute.",
-                }
+                "code": {"type": "string", "description": "Valid Python code to execute."}
             },
             "required": ["code"],
         },
@@ -297,22 +527,17 @@ UNIFIED_TOOL_DECLARATIONS = [
         "description": "Delete a wiki note file that is no longer needed.",
         "parameters": {
             "type": "object",
-            "properties": {
-                "filename": {"type": "string"}
-            },
+            "properties": {"filename": {"type": "string"}},
             "required": ["filename"],
         },
     },
     {
         "name": "google_search",
-        "description": "Perform a Google web search and return the top results.",
+        "description": "Search the web using DuckDuckGo and return top results.",
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query.",
-                }
+                "query": {"type": "string", "description": "The search query."}
             },
             "required": ["query"],
         },
@@ -320,18 +545,25 @@ UNIFIED_TOOL_DECLARATIONS = [
 ]
 
 
-# Dispatcher
+# ─────────────────────────────────────────────
+# Tool Dispatcher
+# ─────────────────────────────────────────────
 TOOL_MAP = {
-    "list_raw_files": lambda args: list_raw_files(),
-    "read_raw_file": lambda args: read_raw_file(args["filename"]),
-    "list_wiki_files": lambda args: list_wiki_files(),
-    "read_wiki_file": lambda args: read_wiki_file(args["filename"]),
-    "write_wiki_file": lambda args: write_wiki_file(args["filename"], args["content"]),
-    "append_wiki_file": lambda args: append_wiki_file(args["filename"], args["content"]),
-    "search_wiki": lambda args: search_wiki(args["query"]),
-    "execute_python": lambda args: execute_python(args["code"]),
-    "delete_wiki_file": lambda args: delete_wiki_file(args["filename"]),
-    "google_search": lambda args: google_search(args["query"]),
+    "list_raw_files":          lambda args: list_raw_files(),
+    "read_raw_file":           lambda args: read_raw_file(args["filename"]),
+    "parse_document":          lambda args: parse_document(args["filename"]),
+    "parse_url":               lambda args: parse_url(args["url"]),
+    "semantic_search":         lambda args: semantic_search(args["query"], args.get("n_results", 5)),
+    "ingest_document":         lambda args: ingest_document(args["filename"]),
+    "sync_wiki_to_vectorstore":lambda args: sync_wiki_to_vectorstore(),
+    "list_wiki_files":         lambda args: list_wiki_files(),
+    "read_wiki_file":          lambda args: read_wiki_file(args["filename"]),
+    "write_wiki_file":         lambda args: write_wiki_file(args["filename"], args["content"]),
+    "append_wiki_file":        lambda args: append_wiki_file(args["filename"], args["content"]),
+    "search_wiki":             lambda args: search_wiki(args["query"]),
+    "execute_python":          lambda args: execute_python(args["code"]),
+    "delete_wiki_file":        lambda args: delete_wiki_file(args["filename"]),
+    "google_search":           lambda args: google_search(args["query"]),
 }
 
 
