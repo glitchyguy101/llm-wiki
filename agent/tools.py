@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 from google.genai import types
-from duckduckgo_search import DDGS
+import serpapi
 
 WIKI_DIR = Path(__file__).parent.parent / "wiki"
 WIKI_DIR.mkdir(exist_ok=True)
@@ -19,7 +19,8 @@ RAW_DIR = Path(__file__).parent.parent / "raw"
 RAW_DIR.mkdir(exist_ok=True)
 CLIPPINGS_DIR = Path(__file__).parent.parent / "Clippings"
 CLIPPINGS_DIR.mkdir(exist_ok=True)
-
+SKILL_DIR = Path(__file__).parent.parent / "Skills"
+SKILL_DIR.mkdir(exist_ok=True)
 
 # ─────────────────────────────────────────────
 # Tool: Read a raw file (filename with .txt .md .docx .html .json .csv or regex)
@@ -183,12 +184,12 @@ def delete_wiki_file(filename: str) -> dict:
 # ────────────────────────────────────────────
 def google_search(query:str) -> dict:
     """Perform a Google web search and return the top results."""
-    with DDGS() as ddgs:
-        try:
-            results = [r for r in ddgs.text(query, region='us-en', max_results=10)]
-            return {"results": results}
-        except Exception as e:
-            return {"error": str(e or "Unknown error during search")}
+    client = serpapi.Client(api_key=os.getenv("SERPAPI_KEY"))
+    try:
+        results = client.search(q=query, engine="google")
+        return {"results": results.get("organic_results", [])}
+    except Exception as e:
+        return {"error": str(e or "Unknown error during search")}
 
 
 # ____________________________________________
@@ -249,6 +250,58 @@ def search_clippings(query: str) -> dict:
             results.append({"file": path.name, "matches": matches})
     return {"query": query, "results": results, "total_files_matched": len(results)}
 
+
+# ─────────────────────────────────────────────
+# list skills
+# ─────────────────────────────────────────────
+def list_skills() -> dict:
+    """List all skill files in the skills directory."""
+    SKILL_DIR = Path(__file__).parent.parent / "Skills"
+    SKILL_DIR.mkdir(exist_ok=True)
+    files = sorted(SKILL_DIR.glob("**/*.py"))
+    result = []
+    for f in files:
+        rel = f.relative_to(SKILL_DIR)
+        stat = f.stat()
+        result.append({
+            "name": str(rel),
+            "size_bytes": stat.st_size,
+            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        })
+    return {"files": result, "count": len(result)}
+
+
+# ─────────────────────────────────────────────
+# navigate Skills folder (for agent to access skills)
+# ─────────────────────────────────────────────
+def read_skill_file(filename: str) -> dict:
+    """Read the content of a skill file."""
+    path = SKILL_DIR / filename
+    if not path.exists():
+        return {"error": f"File '{filename}' not found."}
+    content = path.read_text(encoding="utf-8", errors="ignore")
+    return {"content": content}
+
+
+# ─────────────────────────────────────────────
+# search skills
+# ─────────────────────────────────────────────
+def search_skills(query: str) -> dict:
+    """Search all skill files for a keyword or phrase (case-insensitive)."""
+    SKILL_DIR = Path(__file__).parent.parent / "Skills"
+    SKILL_DIR.mkdir(exist_ok=True)
+    query_lower = query.lower()
+    results = []
+    for path in SKILL_DIR.glob("**/*.py"):
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        lines = content.splitlines()
+        matches = []
+        for i, line in enumerate(lines, 1):
+            if query_lower in line.lower():
+                matches.append({"line": i, "text": line.strip()})
+        if matches:
+            results.append({"file": path.name, "matches": matches})
+    return {"query": query, "results": results, "total_files_matched": len(results)}
 
 # ─────────────────────────────────────────────
 # Gemini function declarations (tool schemas)
@@ -412,7 +465,57 @@ TOOL_DECLARATIONS = [
             },
             "required": ["query"],
         },
-    }
+    },
+    {
+        "name": "read_clipping_file",
+        "description": "Read the content of a clipping file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "The filename of the clipping to read.",
+                }
+            },
+            "required": ["filename"],
+        },
+    },
+    {
+        "name": "list_skills",
+        "description": "List all skill files in the skills directory.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    }, 
+    {
+        "name": "search_skills",
+        "description": "Search all skill files for a keyword or phrase (case-insensitive).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query.",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "read_skill_file",
+        "description": "Read the content of a skill file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "The filename of the skill to read.",
+                }
+            },
+            "required": ["filename"],
+        },
+    },
 ]
 
 
@@ -431,6 +534,11 @@ TOOL_MAP = {
     "list_tools": lambda args: list_tools(),
     "list_clippings": lambda args: list_clippings(),
     "search_clippings": lambda args: search_clippings(args["query"]),
+    "read_clipping_file": lambda args: read_clipping_file(args["filename"]),
+    "list_skills": lambda args: list_skills(),
+    "search_skills": lambda args: search_skills(args["query"]),
+    "read_skill_file": lambda args: read_skill_file(args["filename"]),
+    
 }
 
 
