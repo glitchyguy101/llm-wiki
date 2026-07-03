@@ -191,6 +191,7 @@ def google_search(query:str) -> dict:
     except Exception as e:
         return {"error": str(e or "Unknown error during search")}
 
+
 # ____________________________________________
 # Tool: List all tools (for debugging)
 # ____________________________________________
