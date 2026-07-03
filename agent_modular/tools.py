@@ -25,7 +25,10 @@ WIKI_DIR = _ROOT / "wiki"
 WIKI_DIR.mkdir(exist_ok=True)
 RAW_DIR = _ROOT / "raw"
 RAW_DIR.mkdir(exist_ok=True)
-
+CLIPPINGS_DIR = _ROOT / "Clippings"
+CLIPPINGS_DIR.mkdir(exist_ok=True)
+SKILL_DIR = _ROOT / "Skills"
+SKILL_DIR.mkdir(exist_ok=True)
 
 # ─────────────────────────────────────────────
 # Lazy imports for optional dependencies
@@ -363,20 +366,18 @@ def delete_wiki_file(filename: str) -> dict:
     return {"success": True, "deleted": filename}
 
 
-# ─────────────────────────────────────────────
-# Tool: Web search (DuckDuckGo)
-# ─────────────────────────────────────────────
-def google_search(query: str) -> dict:
-    """Search the web using DuckDuckGo and return top results."""
+
+# ────────────────────────────────────────────
+# Tool: Google Web-search
+# ────────────────────────────────────────────
+def google_search(query:str) -> dict:
+    """Perform a Google web search and return the top results."""
+    client = serpapi.Client(api_key=os.getenv("SERPAPI_KEY"))
     try:
-        from duckduckgo_search import DDGS
-        with DDGS() as ddgs:
-            results = [r for r in ddgs.text(query, max_results=5)]
-            return {"results": results}
-    except ImportError:
-        return {"error": "duckduckgo-search not installed. Run: pip install duckduckgo-search"}
+        results = client.search(q=query, engine="google")
+        return {"results": results.get("organic_results", [])}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e or "Unknown error during search")}
 
 
 # ─────────────────────────────────────────────
@@ -388,6 +389,120 @@ def sync_wiki_to_vectorstore() -> dict:
     if not store:
         return {"error": "Vector store not available."}
     return store.sync_wiki(str(WIKI_DIR))
+
+
+
+# ____________________________________________
+# Tool: List all tools (for debugging)
+# ____________________________________________
+def list_tools() -> dict:
+    """Return a list of all available tools."""
+    return {"tools": list(TOOL_MAP.keys())}
+
+# ____________________________________________
+# Tool: list clippings
+# ____________________________________________
+def list_clippings() -> dict:
+    """List all clipping files in the clippings directory."""
+    CLIPPINGS_DIR = Path(__file__).parent.parent / "Clippings"
+    CLIPPINGS_DIR.mkdir(exist_ok=True)
+    files = sorted(CLIPPINGS_DIR.glob("**/*.md"))
+    result = []
+    for f in files:
+        rel = f.relative_to(CLIPPINGS_DIR)
+        stat = f.stat()
+        result.append({
+            "name": str(rel),
+            "size_bytes": stat.st_size,
+            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        })
+    return {"files": result, "count": len(result)}
+
+
+# ─────────────────────────────────────────────
+# navigate Clippings folder (for agent to access clippings)
+# ─────────────────────────────────────────────
+def read_clipping_file(filename: str) -> dict:
+    """Read the content of a clipping file."""
+    path = CLIPPINGS_DIR / filename
+    if not path.exists():
+        return {"error": f"File '{filename}' not found."}
+    content = path.read_text(encoding="utf-8", errors="ignore")
+    return {"content": content}
+
+# ─────────────────────────────────────────────
+# Search clippings
+# ─────────────────────────────────────────────
+def search_clippings(query: str) -> dict:
+    """Search all clipping files for a keyword or phrase (case-insensitive)."""
+    CLIPPINGS_DIR = Path(__file__).parent.parent / "Clippings"
+    CLIPPINGS_DIR.mkdir(exist_ok=True)
+    query_lower = query.lower()
+    results = []
+    for path in CLIPPINGS_DIR.glob("**/*.md"):
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        lines = content.splitlines()
+        matches = []
+        for i, line in enumerate(lines, 1):
+            if query_lower in line.lower():
+                matches.append({"line": i, "text": line.strip()})
+        if matches:
+            results.append({"file": path.name, "matches": matches})
+    return {"query": query, "results": results, "total_files_matched": len(results)}
+
+
+# ─────────────────────────────────────────────
+# list skills
+# ─────────────────────────────────────────────
+def list_skills() -> dict:
+    """List all skill files in the skills directory."""
+    SKILL_DIR = Path(__file__).parent.parent / "Skills"
+    SKILL_DIR.mkdir(exist_ok=True)
+    files = sorted(SKILL_DIR.glob("**/*.py"))
+    result = []
+    for f in files:
+        rel = f.relative_to(SKILL_DIR)
+        stat = f.stat()
+        result.append({
+            "name": str(rel),
+            "size_bytes": stat.st_size,
+            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        })
+    return {"files": result, "count": len(result)}
+
+
+# ─────────────────────────────────────────────
+# navigate Skills folder (for agent to access skills)
+# ─────────────────────────────────────────────
+def read_skill_file(filename: str) -> dict:
+    """Read the content of a skill file."""
+    path = SKILL_DIR / filename
+    if not path.exists():
+        return {"error": f"File '{filename}' not found."}
+    content = path.read_text(encoding="utf-8", errors="ignore")
+    return {"content": content}
+
+
+# ─────────────────────────────────────────────
+# search skills
+# ─────────────────────────────────────────────
+def search_skills(query: str) -> dict:
+    """Search all skill files for a keyword or phrase (case-insensitive)."""
+    SKILL_DIR = Path(__file__).parent.parent / "Skills"
+    SKILL_DIR.mkdir(exist_ok=True)
+    query_lower = query.lower()
+    results = []
+    for path in SKILL_DIR.glob("**/*.py"):
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        lines = content.splitlines()
+        matches = []
+        for i, line in enumerate(lines, 1):
+            if query_lower in line.lower():
+                matches.append({"line": i, "text": line.strip()})
+        if matches:
+            results.append({"file": path.name, "matches": matches})
+    return {"query": query, "results": results, "total_files_matched": len(results)}
+
 
 
 # ─────────────────────────────────────────────
@@ -542,6 +657,101 @@ UNIFIED_TOOL_DECLARATIONS = [
             "required": ["query"],
         },
     },
+    
+    {
+        "name": "google_search",
+        "description": "Perform a Google web search and return the top results.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query.",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "list_tools",
+        "description": "List all available tools.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "list_clippings",
+        "description": "List all clipping files in the clippings directory.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "search_clippings",
+        "description": "Search all clipping files for a keyword or phrase (case-insensitive).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query.",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "read_clipping_file",
+        "description": "Read the content of a clipping file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "The filename of the clipping to read.",
+                }
+            },
+            "required": ["filename"],
+        },
+    },
+    {
+        "name": "list_skills",
+        "description": "List all skill files in the skills directory.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    }, 
+    {
+        "name": "search_skills",
+        "description": "Search all skill files for a keyword or phrase (case-insensitive).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query.",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "read_skill_file",
+        "description": "Read the content of a skill file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "The filename of the skill to read.",
+                }
+            },
+            "required": ["filename"],
+        },
+    },
 ]
 
 
@@ -563,7 +773,14 @@ TOOL_MAP = {
     "search_wiki":             lambda args: search_wiki(args["query"]),
     "execute_python":          lambda args: execute_python(args["code"]),
     "delete_wiki_file":        lambda args: delete_wiki_file(args["filename"]),
-    "google_search":           lambda args: google_search(args["query"]),
+    "google_search": lambda args: google_search(args["query"]),
+    "list_tools": lambda args: list_tools(),
+    "list_clippings": lambda args: list_clippings(),
+    "search_clippings": lambda args: search_clippings(args["query"]),
+    "read_clipping_file": lambda args: read_clipping_file(args["filename"]),
+    "list_skills": lambda args: list_skills(),
+    "search_skills": lambda args: search_skills(args["query"]),
+    "read_skill_file": lambda args: read_skill_file(args["filename"]),
 }
 
 
